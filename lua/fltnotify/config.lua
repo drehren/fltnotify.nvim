@@ -80,6 +80,11 @@ return {
                 usr_lvl = {}
             end
             cfg.level[lvl] = vim.tbl_extend('force', data, usr_lvl)
+            local hl_group = cfg.level[lvl].hl_group
+            if type(hl_group) == 'string' then
+                hl_group = vim.api.nvim_get_hl_id_by_name(hl_group)
+                cfg.level[lvl].hl_group = hl_group
+            end
         end
 
         return cfg
