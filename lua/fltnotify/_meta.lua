@@ -9,10 +9,11 @@
 ---@alias fltnotify.progress_value number|true|'done'
 
 --- Notification options
----@class fltnotify.notification_data
----@field progress? fltnotify.progress_value
----@field timeout? number|false
----@field level? vim.log.levels
+---@class fltnotify.notification_opts
+---@field message? string The message
+---@field progress? fltnotify.progress_value Use to make a progress notification
+---@field timeout? number|false Use to change or stop timeout.
+---@field level? vim.log.levels The notification level
 
 --- Level visualization
 ---@class fltnotify.level_highlight

@@ -13,16 +13,16 @@ local M = {}
 
 --- Displays a notification to the user.
 ---@param msg string Content of the notification to show to the user.
----@param level vim.log.levels One of the values from `vim.log.levels`.
----@param opts fltnotify.notification_data Additional notification data.
+---@param level? vim.log.levels One of the values from `vim.log.levels`.
+---@param opts? fltnotify.notification_opts Notification options.
 function M.notify(msg, level, opts)
     get_manager():notify(msg, level, opts)
 end
 
 --- Displays a notification only one time.
 ---@param msg string Content of the notification to show to the user.
----@param level vim.log.levels One of the values from `vim.log.levels`.
----@param opts fltnotify.notification_data Additional notification data.
+---@param level? vim.log.levels One of the values from `vim.log.levels`.
+---@param opts? fltnotify.notification_opts Notification options.
 function M.notify_once(msg, level, opts)
     get_manager():notify_once(msg, level, opts)
 end
@@ -36,9 +36,19 @@ end
 --- - timeout: `vim.g.notification_config.timeout`
 ---
 --- To display the notification, use [notification_display](lua://fltnotify.api.notification_display).
+---@param opts? fltnotify.notification_opts Notification content.
 ---@return fltnotify.notification
-function M.create_notification()
-    return get_manager():create_notification()
+function M.create_notification(opts)
+    return get_manager():create_notification(opts)
+end
+
+--- Sets the notification data
+---
+--- To display the notification, use [notification_display](lua://fltnotify.api.notification_display).
+---@param notification fltnotify.notification
+---@param data { message?: string, timeout?: number|false, progress?: number|true|'done', level?: vim.log.levels }
+function M.notification_set_data(notification, data)
+    get_manager():notification_set_opts(notification, data)
 end
 
 --- Set the notification message.
@@ -136,16 +146,11 @@ end
 ---@param config fltnotify.config
 function M.setup(config)
     vim.g.fltnotify_config = config or vim.g.fltnotify_config
-
-    -- If we have not loaded our initial load routines, do so now
-    if not package.loaded['fltnotify.plugin_load'] then
-        require('fltnotify.plugin_load')
-    end
 end
 
 ---@module 'fltprogr'
 
-local function format_lsp_msg(ev)
+local function format_progr_msg(ev)
     if ev.message then
         return ('[%s] %s: %s'):format(ev.category, ev.title, ev.message)
     else
@@ -159,40 +164,34 @@ function M.register_progress_display(registrar, categories)
     local evs = {}
     local display = registrar.create_display({
         on_start = function(event)
-            local msg = format_lsp_msg(event)
             if not evs[event.source] then
                 evs[event.source] = M.create_notification()
             end
             local notification = evs[event.source]
-            M.notification_set_message(notification, msg)
-            if event.level then
-                M.notification_set_level(notification, event.level)
-            end
-            M.notification_set_progress(notification, event.progress)
+            M.notification_set_data(notification, {
+                message = format_progr_msg(event),
+                level = event.level,
+                progress = event.progress,
+            })
             M.notification_display(notification)
         end,
         on_update = function(event)
             local notification =
                 assert(vim.tbl_get(evs, event.source), 'invalid source')
-            local msg = format_lsp_msg(event)
-            M.notification_set_message(notification, msg)
-            if event.level then
-                M.notification_set_level(notification, event.level)
-            end
-            M.notification_set_progress(notification, event.progress)
-            M.notification_display(notification)
+            M.notification_set_data(notification, {
+                message = format_progr_msg(event),
+                level = event.level,
+                progress = event.progress,
+            })
         end,
         on_end = function(event)
             local notification =
                 assert(vim.tbl_get(evs, event.source), 'invalid source')
-            local msg = format_lsp_msg(event)
-            M.notification_set_message(notification, msg)
-            M.notification_set_progress(notification, 'done')
-            M.notification_set_timeout(
-                notification,
-                get_manager():timeout() / 2
-            )
-            M.notification_display(notification)
+            M.notification_set_data(notification, {
+                message = format_progr_msg(event),
+                progress = 'done',
+                timeout = get_manager():timeout() / 2,
+            })
         end,
     })
     if type(categories) ~= 'table' then

@@ -18,141 +18,27 @@ function I:calc_width()
     return vim.iter(self.message):map(vim.fn.strwidth):fold(0, math.max)
 end
 
----@class fltnotify.item_timeout
----@field id fltnotify.notification
----@field val number
-
----@param heap fltnotify.item_timeout[]
----@param value fltnotify.item_timeout
-local function heap_push(heap, value)
-    local idx = #heap + 1
-    heap[idx] = value
-    if idx == 1 then
-        return
-    end
-    local pidx = math.floor(idx / 2)
-    while pidx > 0 and heap[pidx].val > heap[idx].val do
-        heap[pidx], heap[idx] = heap[idx], heap[pidx]
-        idx = pidx
-        pidx = math.floor(idx / 2)
-    end
-end
-
----@param heap fltnotify.item_timeout[]
----@param value fltnotify.item_timeout
----@return fltnotify.item_timeout
-local function heap_replace(heap, value)
-    assert(#heap > 0, 'list is empty')
-    local val = heap[1]
-    heap[1] = value
-    local idx = 1
-    local lidx = 2
-    local ridx = 3
-    while heap[idx] do
-        if heap[lidx] and heap[idx].val > heap[lidx].val then
-            heap[idx], heap[lidx] = heap[lidx], heap[idx]
-            idx = 2 * lidx
-        elseif heap[ridx] and heap[idx].val > heap[ridx].val then
-            heap[idx], heap[ridx] = heap[ridx], heap[idx]
-            idx = 2 * ridx
-        else
-            break
-        end
-        lidx = idx + 1
-        ridx = idx + 2
-    end
-    return val
-end
-
----@param heap fltnotify.item_timeout[]
----@return fltnotify.item_timeout
-local function heap_pop(heap)
-    if #heap == 1 then
-        return table.remove(heap)
-    end
-    return heap_replace(heap, table.remove(heap))
-end
-
----@param timer uv.uv_timer_t
----@param timelist fltnotify.item_timeout[]
----@return fltnotify.item_timeout?
-local function update_timelist(timer, timelist)
-    local cur = timelist[1]
-    if cur then
-        local t = cur.val - timer:get_due_in()
-        for i = 1, #timelist do
-            timelist[i].val = timelist[i].val - t
-        end
-    end
-    return cur
-end
-
-local tmcache = setmetatable({}, { __mode = 'k' })
----@param timer uv.uv_timer_t
----@param timelist fltnotify.item_timeout[]
-local function restart_timer(timer, timelist, callback)
-    if not tmcache[callback] then
-        local function timedone()
-            local popedids = {}
-            local t = heap_pop(timelist)
-            callback(t.id)
-            popedids[t.id] = true
-            for _, v in ipairs(timelist) do
-                v.val = v.val - t.val
-            end
-            while #timelist > 0 and timelist[1].val <= 0 do
-                t = heap_pop(timelist)
-                if not popedids[t.id] then
-                    callback(t.id)
-                    popedids[t.id] = true
-                end
-            end
-            if timelist[1] then
-                timer:start(timelist[1].val, 0, timedone)
-            end
-        end
-        tmcache[callback] = timedone
-    end
-    timer:start(timelist[1].val, 0, tmcache[callback])
-end
-
----@param timer uv.uv_timer_t
----@param timelist fltnotify.item_timeout[]
----@param timeout fltnotify.item_timeout
-local function add_timeout(timer, timelist, timeout, callback)
-    local cur = update_timelist(timer, timelist)
-    heap_push(timelist, timeout)
-    if cur and cur.val == timelist[1].val then
-        return
-    end
-    if timer:is_active() then
-        timer:stop()
-    end
-    restart_timer(timer, timelist, callback)
-end
-
 ---@module 'fltanim'
 
 ---@class fltnotify.manager
 ---@field private _cfg fltnotify.internal_config
 ---@field private _buf integer
+---@field private _win? integer
 ---@field private _ns integer
----@field private _items fltnotify.item[]
----@field private _removed boolean[]
+---@field package _items fltnotify.item[]
+---@field package _removed boolean[]
 ---@field private _lbllen integer[]
----@field private _pframe fltnotify.progress_item[]
----@field private _anim fltanim.runner?
----@field private _danim string[]
----@field private _aids table<fltanim.animation, fltnotify.notification>
+---@field package _lblicon table<fltnotify.notification, string>
+---@field package _anim fltanim.runner?
+---@field package _danim string[]
+---@field package _ianim {[1]: string[], [2]: number}
+---@field package _aids table<fltanim.animation, fltnotify.notification>
 ---@field private _idas table<fltnotify.notification, fltanim.animation>
 ---@field private _once table<string, boolean>
 ---@field private _shown table<fltnotify.notification, boolean>
----@field private _win? integer
 ---@field private _totimer uv.uv_timer_t
 ---@field private _tolist fltnotify.item_timeout[]
----@field private _toutcb function
----@field private _icon table<fltnotify.notification, string>
----@field private _ianim table
+---@field package _tocb function
 local M = {}
 M.__index = M
 
@@ -179,47 +65,103 @@ end
 ---
 --- The new notification will timeout based on this manager configuration.
 --- If you don't want this, use [notification_set_timeout](lua://fltanim.manager:notification_set_timeout) with `false`.
+---@param opts? fltnotify.notification_opts Notification content.
 ---@return fltnotify.notification
-function M:create_notification()
+function M:create_notification(opts)
+    vim.validate('opts', opts, 'table', true)
     self._items[#self._items + 1] = setmetatable({}, I)
     self._lbllen[#self._lbllen + 1] = 0
+    local notification = #self._items
+    if opts then
+        self:_set_opts(
+            2,
+            notification,
+            opts.message,
+            opts.timeout or self._cfg.timeout,
+            opts.level,
+            opts.progress
+        )
+    end
     return #self._items
 end
 
----@class fltnotify.notification_other_data
----@field progress? number|true
----@field timeout? number
+local function _validate(lvl, ...)
+    local ok, err = pcall(vim.validate, ...)
+    if not ok then
+        error(err, (lvl or 1) + 1)
+    end
+end
+
+---@private
+---@param l integer error level
+---@param id fltnotify.notification
+---@param msg string?
+---@param to (number|false)?
+---@param level vim.log.levels?
+---@param pg fltnotify.progress_value?
+---@return number|false
+function M:_set_opts(l, id, msg, to, level, pg)
+    if l > 0 then
+        _validate(l, 'message', msg, 'string', true)
+        _validate(l, 'timeout', to, { 'number', 'boolean' }, true)
+        _validate(l, 'level', level, 'number', true)
+        _validate(l, 'progress', pg, { 'number', 'string', 'boolean' }, true)
+    end
+    local item = self._items[id]
+    local updbits = 0
+    if msg ~= nil then
+        item.message = vim.split(msg, '\r?\n')
+        updbits = updbits + 1
+    end
+    if to ~= nil and to ~= item.timeout then
+        self:_set_timeout(id, to)
+        updbits = updbits + 2
+    end
+    if level ~= nil and item.level ~= level then
+        item.level = level
+        updbits = updbits + 4
+    end
+    if pg ~= nil and item.progress ~= pg then
+        self:_set_progress(id, pg)
+        updbits = updbits + 8
+    end
+    return updbits > 0 and updbits or false
+end
 
 --- Shows a notification
 ---@param notification fltnotify.notification The notification to show
 ---@param msg? string Set or change the notification message
----@param other_data? fltnotify.notification_other_data Set or change other notification data
-function M:notification_show(notification, msg, other_data)
+---@param opts? fltnotify.notification_opts Set or change other notification data
+function M:notification_show(notification, msg, opts)
     local item = self:_validate_id(notification)
     if self._removed[notification] then
         return
     end
-    other_data = other_data or {}
 
-    -- avoid recursion
-    self._shown[notification] = false
-
-    if msg then
-        self:notification_set_message(notification, msg)
-    end
-    if other_data.progress then
-        self:notification_set_progress(notification, other_data.progress)
-    end
-    if other_data.timeout then
-        self:notification_set_timeout(notification, other_data.timeout)
+    local progrupd = false
+    local toupd = not self._shown[notification]
+    if opts then
+        opts.message = msg or opts.message
+        local upd = self:_set_opts(
+            2,
+            notification,
+            opts.message,
+            opts.timeout,
+            opts.level,
+            opts.progress
+        )
+        if upd then
+            toupd = bit.band(upd, 2) == 2 or toupd
+            progrupd = bit.band(upd, 8) == 8
+        elseif self._shown[notification] then
+            return
+        end
     end
 
     local hide = #item.message == 0
 
-    if not hide and item.progress == true then
-        if not self._anim then
-            self._icon[notification] = '◌'
-        else
+    if not hide and progrupd and item.progress == true then
+        if self._anim then
             if not self._idas[notification] then
                 local aid = self._anim:create_animation(unpack(self._ianim))
                 self._aids[aid] = notification
@@ -231,23 +173,39 @@ function M:notification_show(notification, msg, other_data)
     end
 
     self:_update_buf(notification, hide)
+    self._shown[notification] = not hide
+
     self:_update_win()
 
-    self._shown[notification] = true
-
-    if not hide and item.timeout then
-        local timeout = self:_resolve_timeout(notification)
-        if #self._tolist > 0 and self._tolist[1].id == notification then
-            update_timelist(self._totimer, self._tolist)
-            heap_replace(self._tolist, { id = notification, val = timeout })
-            restart_timer(self._totimer, self._tolist, self._toutcb)
-        end
-        add_timeout(
+    if not hide and toupd and item.timeout then
+        local to = require('fltnotify.timeout')
+        to.add_timeout(
             self._totimer,
             self._tolist,
-            { id = notification, val = timeout },
-            self._toutcb
+            { id = notification, val = item.timeout },
+            self._tocb
         )
+    end
+end
+
+---Sets a notification options
+---@param notification fltnotify.notification
+---@param opts fltnotify.notification_opts
+function M:notification_set_opts(notification, opts)
+    self:_validate_id(notification)
+    vim.validate('opts', opts, 'table')
+    if not self._removed[notification] then
+        local changed = self:_set_opts(
+            2,
+            notification,
+            opts.message,
+            opts.timeout,
+            opts.level,
+            opts.progress
+        )
+        if changed and self._shown[notification] then
+            self:notification_show(notification)
+        end
     end
 end
 
@@ -255,11 +213,11 @@ end
 ---@param notification fltnotify.notification
 ---@param message string
 function M:notification_set_message(notification, message)
-    local item = self:_validate_id(notification)
+    self:_validate_id(notification)
     vim.validate('message', message, 'string')
     if not self._removed[notification] then
-        item.message = vim.split(message, '\r?\n')
-        if self._shown[notification] then
+        local changed = self:_set_opts(0, notification, message)
+        if changed and self._shown[notification] then
             self:notification_show(notification)
         end
     end
@@ -269,11 +227,11 @@ end
 ---@param notification fltnotify.notification
 ---@param level vim.log.levels
 function M:notification_set_level(notification, level)
-    local item = self:_validate_id(notification)
+    self:_validate_id(notification)
     vim.validate('level', level, 'number')
     if not self._removed[notification] then
-        item.level = level
-        if self._shown[notification] then
+        local changed = self:_set_opts(0, notification, nil, nil, level)
+        if changed and self._shown[notification] then
             self:notification_show(notification)
         end
     end
@@ -288,8 +246,8 @@ function M:notification_set_progress(notification, progress)
     self:_validate_id(notification)
     vim.validate('progress', progress, { 'number', 'boolean', 'string' })
     if not self._removed[notification] then
-        self:_set_progress(notification, progress)
-        if self._shown[notification] then
+        local changed = self:_set_opts(0, notification, nil, nil, nil, progress)
+        if changed and self._shown[notification] then
             self:notification_show(notification)
         end
     end
@@ -303,8 +261,8 @@ end
 function M:notification_set_timeout(notification, timeout)
     self:_validate_id(notification)
     if not self._removed[notification] then
-        self:_set_timeout(notification, timeout)
-        if self._shown[notification] then
+        local changed = self:_set_opts(2, notification, nil, timeout)
+        if changed and self._shown[notification] then
             self:notification_show(notification)
         end
     end
@@ -316,32 +274,36 @@ end
 function M:_set_progress(id, progress)
     local item = self._items[id]
     item.progress = progress
-    if progress and progress ~= true and progress ~= 'done' then
-        if self._idas[id] and self._anim then
+    if progress == true then
+        if not self._anim then
+            self._lblicon[id] = '◌'
+        end
+    elseif type(progress) == 'number' then
+        if self._idas[id] then
             self._anim:animation_delete(self._idas[id])
             self._idas[id] = nil
         end
         local pv = math.max(0, math.floor(progress * (#self._danim - 1)))
-        self._icon[id] = self._danim[pv + 1]
+        self._lblicon[id] = self._danim[pv + 1]
     else
         -- if done, we also remove the animation
-        if self._idas[id] and self._anim then
+        if self._idas[id] then
             self._anim:animation_delete(self._idas[id])
             self._idas[id] = nil
         end
         if progress == 'done' then
-            self._icon[id] = '✓'
+            self._lblicon[id] = '✓'
         else
-            self._icon[id] = nil
+            self._lblicon[id] = nil
         end
     end
 end
 
-local function uniquify_heap(table, id)
-    local i = 2
-    while i <= #table do
-        if table[i].id == id then
-            table.remove(i)
+local function remove_from_list(list, id)
+    local i = 1
+    while i <= #list do
+        if list[i].id == id then
+            table.remove(list, i)
         else
             i = i + 1
         end
@@ -353,34 +315,43 @@ end
 ---@param timeout number|false
 function M:_set_timeout(id, timeout)
     local item = self._items[id]
-    if #self._tolist > 0 and self._tolist[1].id == id then
-        update_timelist(self._totimer, self._tolist)
-        heap_pop(self._tolist)
-        restart_timer(self._totimer, self._tolist, self._toutcb)
-    end
     item.timeout = timeout
+    if self._shown[id] then
+        if type(item.timeout) == 'number' then
+            local to = require('fltnotify.timeout')
+            to.add_timeout(
+                self._totimer,
+                self._tolist,
+                { id = id, val = item.timeout },
+                self._tocb
+            )
+        else
+            if self._tolist[1] and self._tolist[1].id == id then
+                local to = require('fltnotify.timeout')
+                to.update_timelist(self._totimer, self._tolist)
+            end
+            remove_from_list(self._tolist, id)
+        end
+    end
 end
 
 --- Removes the notification from this manager
 ---@param notification fltnotify.notification Notification id
 function M:notification_delete(notification)
-    self:_validate_id(notification)
+    local item = self:_validate_id(notification)
     self:notification_hide(notification)
 
     self._removed[notification] = true
-    self._icon[notification] = nil
+    self._lblicon[notification] = nil
     if self._idas[notification] and self._anim then
         self._anim:animation_delete(self._idas[notification])
         self._aids[self._idas[notification]] = nil
         self._idas[notification] = nil
     end
-    self._pframe[notification] = nil
-    if #self._tolist > 0 and self._tolist[1].id == notification then
-        update_timelist(self._totimer, self._tolist)
-        heap_pop(self._tolist)
-        restart_timer(self._totimer, self._tolist, self._toutcb)
+    if item.timeout ~= false then
+        self:_set_timeout(notification, false)
     end
-    uniquify_heap(self._tolist, notification)
+
     vim.api.nvim_buf_del_extmark(self._buf, self._ns, notification)
 end
 
@@ -444,26 +415,25 @@ function M:_open_win(width, height)
     self._win = vim.api.nvim_open_win(self._buf, false, winconfig)
 end
 
----@private
+---@package
 function M:_update_win()
     local height = 0
     local width = 0
-    local extmarks = vim.api.nvim_buf_get_extmarks(self._buf, self._ns, 0, -1, {
-        details = true,
-    })
-    local hassep = vim.fn.strwidth(self._cfg.separator) > 0
+    local extmarks =
+        vim.api.nvim_buf_get_extmarks(self._buf, self._ns, 0, -1, {})
+    local count = 0
     for _, extm in pairs(extmarks) do
-        if #extm > 0 then
-            local mw = self._lbllen[extm[1]] + self._items[extm[1]]:calc_width()
-            self._items[extm[1]].lastwidth = mw
-            width = math.max(width, mw, self._items[extm[1]].lastwidth)
-            height = height + #self._items[extm[1]].message
-            if extm[2] > 0 and hassep then
-                height = height + 1
-            end
-        end
+        local mw = self._lbllen[extm[1]] + self._items[extm[1]]:calc_width()
+        self._items[extm[1]].lastwidth = mw
+        width = math.max(width, mw, self._items[extm[1]].lastwidth)
+        height = height + #self._items[extm[1]].message
+        count = count + 1
     end
-    if height == 0 then
+    local hassep = vim.fn.strwidth(self._cfg.separator) > 0
+    if hassep and count > 1 then
+        height = height + count - 1
+    end
+    if height <= 0 then
         if self._win and vim.api.nvim_win_is_valid(self._win) then
             vim.api.nvim_win_close(self._win, true)
             self._win = nil
@@ -477,14 +447,6 @@ function M:_update_win()
         end
     end
 end
-
--- creo q la solucion en si esta bien.. pero igual quiero hacer "poco"..
--- para eso debiera cachar cual fue el cambio..
--- entonces una notificacion seria:
---
--- [<dyn_icon> ][<label>     ]notification line 1
--- [<no_sep_msg_indicator    ]notification line 2
--- [<no_sep_end_msg_indicator]notification line n
 
 local function set_extm_lbl(extmark, text, hl_group)
     extmark.virt_text[#extmark.virt_text + 1] = { text, hl_group }
@@ -527,21 +489,22 @@ function M:_prepare_extmark(id, item, label, hl_group)
         hl_eol = true,
     }
     local ws = {}
-    if self._icon[id] then
-        local iconw = vim.fn.strwidth(self._icon[id])
-        if iconw > 0 then
-            set_extm_lbl(extmark, self._icon[id], hl_group)
-            ws[#ws + 1] = { iconw, vim.fn.strwidth(vim.trim(self._icon[id])) }
-        end
-    end
     local lblw = vim.fn.strwidth(label)
     if lblw > 0 then
         set_extm_lbl(extmark, label, hl_group)
         ws[#ws + 1] = { lblw, vim.fn.strwidth(vim.trim(label)) }
     end
+    if self._lblicon[id] then
+        local iconw = vim.fn.strwidth(self._lblicon[id])
+        if iconw > 0 then
+            set_extm_lbl(extmark, self._lblicon[id], hl_group)
+            ws[#ws + 1] =
+                { iconw, vim.fn.strwidth(vim.trim(self._lblicon[id])) }
+        end
+    end
     local smid, send = ' ', ' '
     if #item.message > 1 then
-        if vim.fn.strwidth(self._cfg.separator) > 0 then
+        if vim.fn.strwidth(self._cfg.separator) == 0 then
             smid, send = '│', '└'
         end
         for i = 2, #item.message - 1 do
@@ -552,22 +515,6 @@ function M:_prepare_extmark(id, item, label, hl_group)
 
     return extmark
 end
-
----@private
----@return string
--- function M:_make_label(id)
---     local item = self._items[id]
---     local cfglvl = self._cfg.level[item.level]
---     if not item.progress then
---         return cfglvl.label
---     elseif item.progress == true then
---         return ' ' -- handled by animator
---     elseif item.progress ~= 'done' then
---         return self._danim[self._pframe[id]]
---     else
---         return '✓'
---     end
--- end
 
 local function get_notification_line(buf, ns_id, id)
     local ems = vim.api.nvim_buf_get_extmarks(buf, ns_id, 0, -1, {})
@@ -588,112 +535,120 @@ local function get_notification_line(buf, ns_id, id)
     return 0, false
 end
 
----@private
+local function prev_id(me, shown)
+    local prev = me - 1
+    while prev > 0 and not shown[prev] do
+        prev = prev - 1
+    end
+    return prev >= 1 and prev or nil
+end
+
+local function update_virt_lines(buf, ns, id, line)
+    local e =
+        vim.api.nvim_buf_get_extmark_by_id(buf, ns, id, { details = true })
+    if #e > 0 then
+        local em = vim.tbl_extend('keep', {}, e[3])
+        em.id = id
+        em.ns_id = nil
+        if #line > 0 then
+            if not em.virt_lines then
+                em.virt_lines = {}
+            end
+            table.insert(em.virt_lines, { line })
+        else
+            table.remove(em.virt_lines)
+        end
+        vim.api.nvim_buf_set_extmark(buf, ns, e[1], e[2], em)
+    end
+end
+
+---@package
 ---@param id fltnotify.notification
 ---@param hide boolean
 function M:_update_buf(id, hide)
     local item = self:_validate_id(id)
+    local sepw = vim.fn.strwidth(self._cfg.separator)
     if not hide then
         local label = self._cfg.level[item.level].label
         local hl_group = self._cfg.level[item.level].hl_group
-        local line, replace = get_notification_line(self._buf, self._ns, id)
+        local line, update = get_notification_line(self._buf, self._ns, id)
         local extm = self:_prepare_extmark(id, item, label, hl_group)
         self._lbllen[id] = vim.iter(extm.virt_text):fold(0, function(n, chunk)
             return n + vim.fn.strwidth(chunk[1])
         end)
-        if not replace then
-            print('showing', id, 'at line', line)
-        end
 
-        local sepw = vim.fn.strwidth(self._cfg.separator)
-        if sepw > 0 and line > 0 then
-            vim.print(sepw, self._cfg.separator)
-            if not replace then
-                vim.api.nvim_buf_set_lines(self._buf, line, line, true, {
+        if sepw > 0 then
+            if line > 0 and not update then
+                local prev = prev_id(id, self._shown)
+                update_virt_lines(self._buf, self._ns, prev, {
                     self._cfg.separator:rep(math.ceil(vim.o.columns / sepw)),
                 })
+            elseif line < vim.api.nvim_buf_line_count(self._buf) - 1 then
+                table.insert(extm.virt_lines, {
+                    {
+                        self._cfg.separator:rep(
+                            math.ceil(vim.o.columns / sepw)
+                        ),
+                    },
+                })
             end
-            line = line + 1
         end
 
-        extm.end_row = line
         vim.api.nvim_buf_set_lines(
             self._buf,
             line,
-            line + (replace and 1 or 0),
+            line + (update and 1 or 0),
             true,
             { item.message[1] }
         )
-        pcall(vim.api.nvim_buf_set_extmark, self._buf, self._ns, line, 0, extm)
+        vim.api.nvim_buf_set_extmark(self._buf, self._ns, line, 0, extm)
     else
         local em =
             vim.api.nvim_buf_get_extmark_by_id(self._buf, self._ns, id, {})
         if #em == 0 then
             return
         end
-        print('hidding', id, 'at line', em[1])
+        if
+            sepw > 0
+            and em[1] > 0
+            and vim.api.nvim_buf_line_count(self._buf) == em[1]
+        then
+            local prev = prev_id(id, self._shown)
+            update_virt_lines(self._buf, self._ns, prev, {})
+        end
         vim.api.nvim_buf_set_lines(self._buf, em[1], em[1] + 1, true, {})
-    end
-end
-
----@private
----@param notification fltnotify.notification
----@return number timeout
-function M:_resolve_timeout(notification)
-    local item = self._items[notification]
-    if not item.timeout or item.timeout == true then
-        return self._cfg.timeout
-    else
-        ---@diagnostic disable-next-line: return-type-mismatch
-        return item.timeout
     end
 end
 
 --- Creates and sends a new notification
 ---@param msg string Content of the notification to show to the user
----@param level vim.log.levels One of the values from `vim.log.levels`
----@param other_data fltnotify.notification_data Additional notification data
-function M:notify(msg, level, other_data)
+---@param level? vim.log.levels One of the values from `vim.log.levels`
+---@param opts? fltnotify.notification_opts Additional notification data
+function M:notify(msg, level, opts)
     vim.validate('msg', msg, 'string')
     vim.validate('level', level, 'number', true)
-    other_data = other_data or {}
+    vim.validate('opts', opts, 'table', true)
 
-    local notification = self:create_notification()
-    self:notification_set_message(notification, msg)
-    if level then
-        self:notification_set_level(notification, level)
-    end
-    if other_data.timeout then
-        self:notification_set_timeout(notification, other_data.timeout)
-    end
-    if other_data.progress then
-        self:notification_set_progress(notification, other_data.progress)
-    end
-    if other_data.level then
-        self:notification_set_level(notification, other_data.level)
-    end
+    opts = opts or {}
+    opts.level = level or opts.level
+    opts.timeout = opts.timeout or self._cfg.timeout
 
-    local timeout = self:_resolve_timeout(notification)
-    self._items[notification].timeout = nil
-
-    self:notification_show(notification)
-    vim.defer_fn(function()
-        self:notification_delete(notification)
-    end, timeout)
+    local id = self:create_notification()
+    self:notification_show(id, msg, opts)
 end
 
 --- Creates and sends a new notification, shown only the first time
 ---@param msg string Content of the notification to show to the user
----@param level vim.log.levels One of the values from `vim.log.levels`
----@param data fltnotify.notification_data Additional notification data
-function M:notify_once(msg, level, data)
+---@param level? vim.log.levels One of the values from `vim.log.levels`
+---@param opts? fltnotify.notification_opts Additional notification data
+function M:notify_once(msg, level, opts)
     vim.validate('msg', msg, 'string')
     vim.validate('level', level, 'number', true)
-    vim.validate('data', data, 'table', true)
+    vim.validate('data', opts, 'table', true)
 
     if not self._once[msg] then
         self._once[msg] = true
-        self:notify(msg, level, data)
+        self:notify(msg, level, opts)
     end
 end
 
@@ -725,7 +680,6 @@ function M:create_notifications_log(ns)
             endline + 1,
             self._cfg.level[item.level].hl_group,
         }
-        print('item', i, vim.inspect(mark))
         marks[#marks + 1] = mark
         line = endline
     end
@@ -760,6 +714,9 @@ function M:destroy()
 end
 
 return {
+    ---Creates a new notification manager
+    ---@param config fltnotify.config
+    ---@return fltnotify.manager
     new = function(config)
         local cfg = require('fltnotify.config').get(config)
         local mgr
@@ -769,20 +726,18 @@ return {
             _ns = vim.api.nvim_create_namespace(''),
             _buf = vim.api.nvim_create_buf(false, true),
             _removed = {},
-            _pframe = {},
             _once = {},
             _lbllen = {},
+            _lblicon = {},
             _aids = {},
             _totimer = vim.uv.new_timer(),
             _tolist = {},
             _idas = {},
             _shown = {},
-            _icon = {},
             _ianim = {},
-            _changes = 0,
         }
+        ---@cast mgr fltnotify.manager
         local ok, anim = pcall(require, 'fltanim')
-        ok = false
         if ok then
             local animations = require('fltanim.animations')
             mgr._danim = animations[cfg.progress_animation.determinate](
@@ -793,24 +748,27 @@ return {
                     cfg.progress_animation.width
                 ),
             }
-            mgr._anim = anim.new(cfg.progress_animation.fps, function(items)
-                for _, item in ipairs(items) do
-                    local id = mgr._idas[item.id]
-                    if not mgr._removed[id] then
-                        mgr._icon[id] = item.frame
-                        mgr:_update_buf(id, #mgr._items[id].message > 0)
+            mgr._anim = anim.new(
+                cfg.progress_animation.fps,
+                vim.schedule_wrap(function(items)
+                    for _, item in ipairs(items) do
+                        local id = mgr._aids[item.id]
+                        if id and not mgr._removed[id] then
+                            mgr._lblicon[id] = item.frame
+                            mgr:_update_buf(id, #mgr._items[id].message == 0)
+                        end
                     end
-                end
-                mgr:_update_win()
-            end)
+                    mgr:_update_win()
+                end)
+            )
         else
             mgr._danim = {}
             for i = 0, 1000 do
                 mgr._danim[i] = ('%3.1f%%'):format(i / 10)
             end
         end
-        mgr._toutcb = vim.schedule_wrap(function(notification)
-            mgr:notification_hide(notification)
+        mgr._tocb = vim.schedule_wrap(function(notification)
+            mgr:notification_delete(notification)
         end)
         return setmetatable(mgr, M)
     end,
