@@ -151,10 +151,15 @@ end
 ---@module 'fltprogr'
 
 local function format_progr_msg(ev)
+    local progr = require('fltprogr')
+    local category = ev.category
+    if ev.category == progr.categories.LSP then
+        category = vim.lsp.get_client_by_id(ev.client_id).name
+    end
     if ev.message then
-        return ('[%s] %s: %s'):format(ev.category, ev.title, ev.message)
+        return ('[%s] %s: %s'):format(category, ev.title, ev.message)
     else
-        return ('[%s] %s'):format(ev.category, ev.title)
+        return ('[%s] %s'):format(category, ev.title)
     end
 end
 
@@ -194,9 +199,6 @@ function M.register_progress_display(registrar, categories)
             })
         end,
     })
-    if type(categories) ~= 'table' then
-        categories = { categories }
-    end
     registrar.display_register(display, categories)
 end
 
