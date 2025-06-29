@@ -157,7 +157,7 @@ local function format_progr_msg(ev)
         category = vim.lsp.get_client_by_id(ev.client_id).name
     end
     if ev.message then
-        return ('[%s] %s: %s'):format(category, ev.title, ev.message)
+        return ('[%s] %s\n%s'):format(category, ev.title, ev.message)
     else
         return ('[%s] %s'):format(category, ev.title)
     end

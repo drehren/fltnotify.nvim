@@ -73,13 +73,18 @@ function M:create_notification(opts)
     self._lbllen[#self._lbllen + 1] = 0
     local notification = #self._items
     if opts then
+        local timeout = opts.timeout
+        if timeout == nil and not opts.progress then
+            timeout = self._cfg.timeout
+        end
         self:_set_opts(
             2,
             notification,
             opts.message,
-            opts.timeout or self._cfg.timeout,
+            timeout,
             opts.level,
-            opts.progress
+            opts.progress,
+            opts.cancel
         )
     end
     return #self._items
