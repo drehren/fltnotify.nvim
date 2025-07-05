@@ -4,6 +4,11 @@ local manager
 local function get_manager()
     if not manager then
         manager = require('fltnotify.manager').new(vim.g.fltnotify_config)
+        if vim.g.fltnotify_config.cancel_command_name then
+            manager:create_cancelation_command(
+                vim.g.fltnotify_config.cancel_command_name
+            )
+        end
     end
     return manager
 end
@@ -34,6 +39,7 @@ end
 --- - level: `vim.log.levels.INFO`
 --- - progress: `false`
 --- - timeout: `vim.g.notification_config.timeout`
+--- - cancel: `nil`
 ---
 --- To display the notification, use [notification_display](lua://fltnotify.api.notification_display).
 ---@param opts? fltnotify.notification_opts Notification content.
@@ -74,9 +80,15 @@ end
 --- To signal the end of the progress, pass `'done'`.
 --- To stop progress display, pass `false`.
 ---@param notification fltnotify.notification Notification to update.
----@param progress fltnotify.progress_value Progress value, or `true` or `false`.
+---@param progress number|boolean|'done' Progress value, or `true` or `false`.
 function M.notification_set_progress(notification, progress)
     get_manager():notification_set_progress(notification, progress)
+end
+
+--- Cancel a cancellable notification.
+--- @param notification fltnotify.notification
+function M:notification_progress_cancel(notification)
+    get_manager():notification_progress_cancel(notification)
 end
 
 --- Set the notification level
@@ -177,6 +189,7 @@ function M.register_progress_display(registrar, categories)
                 message = format_progr_msg(event),
                 level = event.level,
                 progress = event.progress,
+                cancel = event.cancel,
             })
             M.notification_display(notification)
         end,

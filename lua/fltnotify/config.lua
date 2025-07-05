@@ -21,6 +21,7 @@
 ---@field level table<vim.log.levels, fltnotify.level_hl>
 ---@field progress_animation fltnotify.internal_progress_config
 ---@field replace_system_notification boolean
+---@field cancel_command_name string
 
 ---@type fltnotify.internal_config
 local default_config = {
@@ -64,6 +65,7 @@ local default_config = {
         width = 4,
     },
     replace_system_notification = false,
+    cancel_command_name = 'FltNotifyCancel',
 }
 
 return {

@@ -1,5 +1,5 @@
 local n = require('fltnotify.manager').new({
-    separator = ';x',
+    separator = '~',
 })
 
 n:notify('hello world!')
