@@ -168,6 +168,9 @@ local function format_progr_msg(ev)
     if ev.category == progr.categories.LSP then
         category = vim.lsp.get_client_by_id(ev.client_id).name
     end
+    if ev.category == progr.categories.WORK then
+        category = ev.command or category
+    end
     if ev.message then
         return ('[%s] %s\n%s'):format(category, ev.title, ev.message)
     else
@@ -180,7 +183,7 @@ end
 function M.register_progress_display(registrar, categories)
     local evs = {}
     local display = registrar.create_display({
-        on_start = function(event)
+        on_start = vim.schedule_wrap(function(event)
             if not evs[event.source] then
                 evs[event.source] = M.create_notification()
             end
@@ -192,8 +195,8 @@ function M.register_progress_display(registrar, categories)
                 cancel = event.cancel,
             })
             M.notification_display(notification)
-        end,
-        on_update = function(event)
+        end),
+        on_update = vim.schedule_wrap(function(event)
             local notification =
                 assert(vim.tbl_get(evs, event.source), 'invalid source')
             M.notification_set_data(notification, {
@@ -201,8 +204,8 @@ function M.register_progress_display(registrar, categories)
                 level = event.level,
                 progress = event.progress,
             })
-        end,
-        on_end = function(event)
+        end),
+        on_end = vim.schedule_wrap(function(event)
             local notification =
                 assert(vim.tbl_get(evs, event.source), 'invalid source')
             M.notification_set_data(notification, {
@@ -210,7 +213,7 @@ function M.register_progress_display(registrar, categories)
                 progress = 'done',
                 timeout = get_manager():timeout() / 2,
             })
-        end,
+        end),
     })
     registrar.display_register(display, categories)
 end
