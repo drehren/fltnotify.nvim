@@ -8,7 +8,7 @@ m:create_cancelation_command('FltSpecCancel')
 local function check_cancel(name, n)
     vim.defer_fn(function()
         if m:notification_visible(n) then
-            print(name .. ' not cancelled')
+            print('bad: ' .. name .. ' not cancelled')
         end
     end, m:timeout() / 2 + 30)
 end
@@ -19,7 +19,6 @@ local i = m:create_notification({
     level = vim.log.levels.ERROR,
     progress = true,
     cancel = function()
-        print('i was cancelled')
         pi2 = m:create_notification({
             message = 'special long cancel\nthis is detail of message',
             progress = true,
@@ -51,6 +50,8 @@ vim.defer_fn(function()
 end, 2000)
 
 vim.defer_fn(function()
-    -- vim.cmd('FltSpecCancel special\\ long\\ cancel')
     m:notification_progress_cancel(pi2)
+    if not m:notification_visible(pi2) then
+        print('bad: notification should stay')
+    end
 end, 5000)
