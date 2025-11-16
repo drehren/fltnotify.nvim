@@ -1,5 +1,12 @@
 ---@module 'fltanim'
 
+local buf_set_extmark = vim.api.nvim_buf_set_extmark
+local buf_get_extmarks = vim.api.nvim_buf_get_extmarks
+local buf_get_extmark_by_id = vim.api.nvim_buf_get_extmark_by_id
+local buf_del_extmark = vim.api.nvim_buf_del_extmark
+
+local mceil = math.ceil
+
 ---@alias fltnotify.progress_item integer
 
 ---@class fltnotify.item
@@ -106,12 +113,8 @@ function M:notification_show(notification)
     local to = item.timeout
     if not hide and to then
         item.timeout = nil
-        require('fltnotify.timeout').add_timeout(
-            self._totimer,
-            self._tolist,
-            to,
-            self._tocb
-        )
+        local tomgr = require('fltnotify.timeout')
+        tomgr.add_timeout(self._totimer, self._tolist, to, self._tocb)
     end
 end
 
@@ -224,11 +227,11 @@ function M:_set_timeout(id, timeout)
     local changed = false
     if timeout == false then
         if self._shown[id] then
-            local to = require('fltnotify.timeout')
+            local tomgr = require('fltnotify.timeout')
             if self._tolist[1] and self._tolist[1].id == id then
-                to.update_timelist(self._totimer, self._tolist)
+                tomgr.update_timelist(self._totimer, self._tolist)
                 table.remove(self._tolist, 1)
-                to.restart_timer(self._totimer, self._tolist, self._tocb)
+                tomgr.restart_timer(self._totimer, self._tolist, self._tocb)
                 changed = true
             end
         end
@@ -241,13 +244,13 @@ function M:_set_timeout(id, timeout)
     validate(3, 'timeout', timeout, 'number')
     local ito = { id = id, val = timeout }
     if self._shown[id] then
-        local to = require('fltnotify.timeout')
+        local tomgr = require('fltnotify.timeout')
         if self._tolist[1] and self._tolist[1].id == id then
-            to.update_timelist(self._totimer, self._tolist)
+            tomgr.update_timelist(self._totimer, self._tolist)
             changed = true
         end
-        to.add_timeout(self._totimer, self._tolist, ito, self._tocb)
-        to.restart_timer(self._totimer, self._tolist, self._tocb)
+        tomgr.add_timeout(self._totimer, self._tolist, ito, self._tocb)
+        tomgr.restart_timer(self._totimer, self._tolist, self._tocb)
     else
         changed = not not self._items[id].timeout
             and self._items[id].timeout.val ~= ito.val
@@ -407,7 +410,7 @@ function M:notification_delete(notification)
             end
             self._rlink[rid] = nil
 
-            vim.api.nvim_buf_del_extmark(self._buf, self._ns, rid)
+            buf_del_extmark(self._buf, self._ns, rid)
         end
     end
 end
@@ -477,8 +480,7 @@ end
 function M:_update_win()
     local height = 0
     local width = 0
-    local extmarks =
-        vim.api.nvim_buf_get_extmarks(self._buf, self._ns, 0, -1, {})
+    local extmarks = buf_get_extmarks(self._buf, self._ns, 0, -1, {})
     local count = 0
     for _, extm in pairs(extmarks) do
         local mw = self._lbllen[extm[1]] + self._items[extm[1]]:calc_width()
@@ -587,7 +589,7 @@ function M:_prepare_extmark(id, item, label, hl_group)
 end
 
 local function get_notification_line(buf, ns_id, id)
-    local ems = vim.api.nvim_buf_get_extmarks(buf, ns_id, 0, -1, {})
+    local ems = buf_get_extmarks(buf, ns_id, 0, -1, {})
     local last = {}
     for _, em in ipairs(ems) do
         if em[1] > id then
@@ -597,12 +599,12 @@ local function get_notification_line(buf, ns_id, id)
     end
     if #last > 0 then
         if last[1] == id then
-            return last[2], true
+            return last[2], last[2] + 1
         else
-            return last[2] + 1, false
+            return last[2] + 1, last[2] + 1
         end
     end
-    return -1, false
+    return 0, -1
 end
 
 local function prev_id(me, shown)
@@ -614,8 +616,7 @@ local function prev_id(me, shown)
 end
 
 local function update_virt_lines(buf, ns, id, line)
-    local e =
-        vim.api.nvim_buf_get_extmark_by_id(buf, ns, id, { details = true })
+    local e = buf_get_extmark_by_id(buf, ns, id, { details = true })
     if #e > 0 then
         local em = vim.tbl_extend('keep', {}, e[3])
         em.id = id
@@ -628,18 +629,14 @@ local function update_virt_lines(buf, ns, id, line)
         else
             table.remove(em.virt_lines)
         end
-        vim.api.nvim_buf_set_extmark(buf, ns, e[1], e[2], em)
+        buf_set_extmark(buf, ns, e[1], e[2], em)
     end
 end
 
 function M:_start_timeout(id, timeout)
-    local to = require('fltnotify.timeout')
-    to.add_timeout(
-        self._totimer,
-        self._tolist,
-        { id = id, val = timeout },
-        self._tocb
-    )
+    local tomgr = require('fltnotify.timeout')
+    local to = { id = id, val = timeout }
+    tomgr.add_timeout(self._totimer, self._tolist, to, self._tocb)
 end
 
 ---@param id fltnotify.notification
@@ -659,8 +656,6 @@ function M:_check_progress_anim(id, item)
     end
 end
 
-local mceil = math.ceil
-
 ---@package
 ---@param id fltnotify.notification
 ---@param hide boolean
@@ -677,38 +672,30 @@ function M:_update_buf(id, hide)
     if not hide then
         local label = self._cfg.level[item.level].label
         local hl_group = self._cfg.level[item.level].hl_group
-        local line, update = get_notification_line(self._buf, self._ns, id)
+        local lstart, lend = get_notification_line(self._buf, self._ns, id)
         local extm = self:_prepare_extmark(id, item, label, hl_group)
         self._lbllen[id] = vim.iter(extm.virt_text):fold(0, function(n, chunk)
             return n + vim.fn.strwidth(chunk[1])
         end)
 
         if sepw > 0 then
-            if line > 0 and not update then
+            if lstart > 0 and lstart >= lend then
                 local prev = prev_id(id, self._shown)
                 update_virt_lines(self._buf, self._ns, prev, {
                     self._cfg.separator:rep(mceil(vim.o.columns / sepw)),
                 })
-            elseif line < vim.api.nvim_buf_line_count(self._buf) - 1 then
+            elseif lstart < vim.api.nvim_buf_line_count(self._buf) - 1 then
                 local tmp = self._cfg.separator:rep(mceil(vim.o.columns / sepw))
                 table.insert(extm.virt_lines, { { tmp } })
             end
         end
 
-        local lastline
-        if line == -1 then
-            lastline = -1
-            line = 0
-        else
-            lastline = line + (update and 1 or 0)
-        end
-        vim.api.nvim_buf_set_lines(self._buf, line, lastline, true, {
+        vim.api.nvim_buf_set_lines(self._buf, lstart, lend, true, {
             item.message[1],
         })
-        vim.api.nvim_buf_set_extmark(self._buf, self._ns, line, 0, extm)
+        buf_set_extmark(self._buf, self._ns, lstart, 0, extm)
     else
-        local em =
-            vim.api.nvim_buf_get_extmark_by_id(self._buf, self._ns, id, {})
+        local em = buf_get_extmark_by_id(self._buf, self._ns, id, {})
         if #em == 0 then
             return
         end
@@ -795,7 +782,7 @@ function M:create_notifications_log(ns)
     vim.api.nvim_set_option_value('ma', false, { buf = buf })
 
     for _, mark in ipairs(marks) do
-        vim.api.nvim_buf_set_extmark(buf, self._ns, mark[1], 0, {
+        buf_set_extmark(buf, self._ns, mark[1], 0, {
             end_col = 0,
             end_row = mark[2] - 1,
             hl_group = mark[3],
