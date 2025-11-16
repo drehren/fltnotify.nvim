@@ -458,6 +458,7 @@ function M:_open_win(width, height)
         title = self._cfg.title,
         title_pos = self._cfg.title and self._cfg.title_pos or nil,
         zindex = 1000,
+        hide = false,
     }
     if vim.startswith(winconfig.anchor, 'N') then
         winconfig.row = self._cfg.margin[1]
@@ -496,15 +497,13 @@ function M:_update_win()
         height = height + count - 1
     end
     if height <= 0 then
-        if self._win and vim.api.nvim_win_is_valid(self._win) then
-            vim.api.nvim_win_close(self._win, true)
-            self._win = nil
-        end
+        local winconfig = { hide = true }
+        vim.api.nvim_win_set_config(self._win, winconfig)
     else
         if not self._win or not vim.api.nvim_win_is_valid(self._win) then
             self:_open_win(width, height)
         else
-            local winconfig = { width = width, height = height }
+            local winconfig = { width = width, height = height, hide = false }
             vim.api.nvim_win_set_config(self._win, winconfig)
         end
     end
@@ -603,7 +602,7 @@ local function get_notification_line(buf, ns_id, id)
             return last[2] + 1, false
         end
     end
-    return 0, false
+    return -1, false
 end
 
 local function prev_id(me, shown)
@@ -660,6 +659,8 @@ function M:_check_progress_anim(id, item)
     end
 end
 
+local mceil = math.ceil
+
 ---@package
 ---@param id fltnotify.notification
 ---@param hide boolean
@@ -686,26 +687,24 @@ function M:_update_buf(id, hide)
             if line > 0 and not update then
                 local prev = prev_id(id, self._shown)
                 update_virt_lines(self._buf, self._ns, prev, {
-                    self._cfg.separator:rep(math.ceil(vim.o.columns / sepw)),
+                    self._cfg.separator:rep(mceil(vim.o.columns / sepw)),
                 })
             elseif line < vim.api.nvim_buf_line_count(self._buf) - 1 then
-                table.insert(extm.virt_lines, {
-                    {
-                        self._cfg.separator:rep(
-                            math.ceil(vim.o.columns / sepw)
-                        ),
-                    },
-                })
+                local tmp = self._cfg.separator:rep(mceil(vim.o.columns / sepw))
+                table.insert(extm.virt_lines, { { tmp } })
             end
         end
 
-        vim.api.nvim_buf_set_lines(
-            self._buf,
-            line,
-            line + (update and 1 or 0),
-            true,
-            { item.message[1] }
-        )
+        local lastline
+        if line == -1 then
+            lastline = -1
+            line = 0
+        else
+            lastline = line + (update and 1 or 0)
+        end
+        vim.api.nvim_buf_set_lines(self._buf, line, lastline, true, {
+            item.message[1],
+        })
         vim.api.nvim_buf_set_extmark(self._buf, self._ns, line, 0, extm)
     else
         local em =

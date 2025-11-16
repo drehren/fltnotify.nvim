@@ -1,3 +1,5 @@
+---@module 'vim.uv'
+
 local M = {}
 
 ---@class fltnotify.item_timeout
