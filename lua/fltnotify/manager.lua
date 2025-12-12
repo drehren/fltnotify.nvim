@@ -442,6 +442,24 @@ function M:notification_hide(notification)
     end
 end
 
+---@param anchor 'NE'|'NW'|'SE'|'SW'
+---@return integer row
+---@return integer col
+function M:_calc_pos(anchor)
+    local row, col = 0, 0
+    if vim.startswith(anchor, 'N') then
+        row = self._cfg.margin[1]
+    else
+        row = vim.o.lines - vim.o.cmdheight - self._cfg.margin[1]
+    end
+    if vim.endswith(anchor, 'W') then
+        col = self._cfg.margin[2]
+    else
+        col = vim.o.columns - self._cfg.margin[2]
+    end
+    return row, col
+end
+
 --- Open the notification winow
 ---@private
 ---@param width number
@@ -463,17 +481,26 @@ function M:_open_win(width, height)
         zindex = 1000,
         hide = false,
     }
-    if vim.startswith(winconfig.anchor, 'N') then
-        winconfig.row = self._cfg.margin[1]
-    else
-        winconfig.row = vim.o.lines - vim.o.cmdheight - self._cfg.margin[1]
-    end
-    if vim.endswith(winconfig.anchor, 'W') then
-        winconfig.col = self._cfg.margin[2]
-    else
-        winconfig.col = vim.o.columns - self._cfg.margin[2]
-    end
+    local row, col = self:_calc_pos(winconfig.anchor)
+    winconfig.row, winconfig.col = row, col
     self._win = vim.api.nvim_open_win(self._buf, false, winconfig)
+
+    vim.api.nvim_create_autocmd('WinResized', {
+        callback = function()
+            if not vim.api.nvim_win_is_valid(self._win) then
+                return true
+            end
+            local wcfg = vim.api.nvim_win_get_config(self._win)
+            local nrow, ncol = self:_calc_pos(wcfg.anchor)
+            if nrow ~= row or ncol ~= col then
+                vim.api.nvim_win_set_config(self._win, {
+                    relative = 'editor',
+                    row = nrow,
+                    col = ncol,
+                })
+            end
+        end,
+    })
 end
 
 ---@package
