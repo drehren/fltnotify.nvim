@@ -493,6 +493,8 @@ function M:_open_win(width, height)
             local wcfg = vim.api.nvim_win_get_config(self._win)
             local nrow, ncol = self:_calc_pos(wcfg.anchor)
             if nrow ~= row or ncol ~= col then
+                row = nrow
+                col = ncol
                 vim.api.nvim_win_set_config(self._win, {
                     relative = 'editor',
                     row = nrow,
