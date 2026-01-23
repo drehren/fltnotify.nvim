@@ -781,7 +781,7 @@ function M:create_notifications_log(ns)
     local name = ('fltnotify://%s.log'):format(ns)
     local buf = vim.fn.bufnr(name, false)
     if buf == -1 then
-        buf = vim.api.nvim_create_buf(true, true)
+        buf = vim.api.nvim_create_buf(false, true)
         vim.api.nvim_buf_set_name(buf, name)
         vim.api.nvim_set_option_value('bt', 'nofile', { buf = buf })
     end
