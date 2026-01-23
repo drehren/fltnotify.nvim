@@ -779,7 +779,7 @@ end
 ---@return integer buffer
 function M:create_notifications_log(ns)
     local name = ('fltnotify://%s.log'):format(ns)
-    local buf = vim.fn.bufnr(name)
+    local buf = vim.fn.bufnr(name, false)
     if buf == -1 then
         buf = vim.api.nvim_create_buf(true, true)
         vim.api.nvim_buf_set_name(buf, name)

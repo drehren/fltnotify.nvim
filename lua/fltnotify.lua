@@ -141,9 +141,10 @@ function M.view_notification_log(view)
     local logbuf = get_manager():create_notifications_log('system')
     if view == 'window' or view == 'tab' then
         if view == 'tab' then
-            vim.cmd.tabnew()
+            vim.cmd.sbuffer({ range = { logbuf }, mods = { tab = 1 } })
+        else
+            vim.api.nvim_win_set_buf(0, logbuf)
         end
-        vim.api.nvim_win_set_buf(0, logbuf)
     elseif view == 'buffer' then
         return logbuf
     else
