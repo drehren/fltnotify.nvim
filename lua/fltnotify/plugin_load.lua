@@ -16,6 +16,6 @@ if progrok then
     local fltnotify = require('fltnotify')
     fltnotify.register_progress_display(
         progress,
-        { progress.categories.LSP, progress.categories.WORK }
+        { '*', progress.categories.LSP, progress.categories.WORK }
     )
 end

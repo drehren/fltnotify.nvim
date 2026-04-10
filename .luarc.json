@@ -1,0 +1,14 @@
+{
+    "runtime.version": "Lua 5.1",
+    "workspace": {
+        "library": [
+            "${env:VIMRUNTIME}",
+            "${3rd}/luv",
+            "../fltanim.nvim",
+            "../fltprogr.nvim"
+        ],
+        "hint": {
+            "enable": true
+        }
+    }
+}

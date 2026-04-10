@@ -860,7 +860,6 @@ function M:_cancel_progress(id)
     end
     self:_set_cancel(self._items[id], false)
     self:notification_show(idn or id)
-    done = true
 end
 
 --- Cancel ongoing progress notification if cancellable.

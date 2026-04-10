@@ -185,10 +185,10 @@ function M.register_progress_display(registrar, categories)
     local evs = {}
     local display = registrar.create_display({
         on_start = vim.schedule_wrap(function(event)
-            if not evs[event.source] then
-                evs[event.source] = M.create_notification()
+            if not evs[event.id] then
+                evs[event.id] = M.create_notification()
             end
-            local notification = evs[event.source]
+            local notification = evs[event.id]
             M.notification_set_data(notification, {
                 message = format_progr_msg(event),
                 level = event.level,
@@ -198,8 +198,7 @@ function M.register_progress_display(registrar, categories)
             M.notification_display(notification)
         end),
         on_update = vim.schedule_wrap(function(event)
-            local notification =
-                assert(vim.tbl_get(evs, event.source), 'invalid source')
+            local notification = assert(evs[event.id], 'invalid event')
             M.notification_set_data(notification, {
                 message = format_progr_msg(event),
                 level = event.level,
@@ -207,8 +206,7 @@ function M.register_progress_display(registrar, categories)
             })
         end),
         on_end = vim.schedule_wrap(function(event)
-            local notification =
-                assert(vim.tbl_get(evs, event.source), 'invalid source')
+            local notification = assert(evs[event.id], 'invalid event')
             M.notification_set_data(notification, {
                 message = format_progr_msg(event),
                 progress = 'done',
