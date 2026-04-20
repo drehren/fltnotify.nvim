@@ -1,9 +1,19 @@
 {
-    "runtime.version": "Lua 5.1",
+    "runtime":{
+        "version":"Lua 5.1",
+        "pathStrict": true,
+        "path": [
+            "lua/?.lua",
+            "lua/?/init.lua",
+            "library/?.lua"
+        ]
+    },
     "workspace": {
         "library": [
             "${env:VIMRUNTIME}",
             "${3rd}/luv",
+            "${3rd}/busted",
+            "${3rd}/luassert",
             "../fltanim.nvim",
             "../fltprogr.nvim"
         ],

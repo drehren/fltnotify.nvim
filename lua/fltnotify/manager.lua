@@ -230,7 +230,7 @@ function M:_set_timeout(id, timeout)
             local tomgr = require('fltnotify.timeout')
             if self._tolist[1] and self._tolist[1].id == id then
                 tomgr.update_timelist(self._totimer, self._tolist)
-                table.remove(self._tolist, 1)
+                tomgr.timelist_pop(self._tolist)
                 tomgr.restart_timer(self._totimer, self._tolist, self._tocb)
                 changed = true
             end
