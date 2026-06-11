@@ -7,12 +7,14 @@ local buf_del_extmark = vim.api.nvim_buf_del_extmark
 
 local mceil = math.ceil
 
+local T = require('fltnotify.timeout')
+
 ---@alias fltnotify.progress_item integer
 
 ---@class fltnotify.item
 ---@field message string[]
----@field progress? fltnotify.progress_value|'cancelled'|'cancelling'
 ---@field timeout? fltnotify.item_timeout
+---@field progress? fltnotify.progress_value|'cancelled'|'cancelling'
 ---@field cancel? function
 local I = {
     level = vim.log.levels.INFO,
@@ -24,8 +26,6 @@ I.__index = I
 function I:calc_width()
     return vim.iter(self.message):map(vim.fn.strwidth):fold(0, math.max)
 end
-
----@module 'fltanim'
 
 ---@class fltnotify.manager
 ---@field private _cfg fltnotify.internal_config
@@ -46,7 +46,7 @@ end
 ---@field private _once table<string, boolean>
 ---@field package _shown table<fltnotify.notification, boolean>
 ---@field private _totimer uv.uv_timer_t
----@field private _tolist fltnotify.item_timeout[]
+---@field private _toheap fltnotify.simple_heap<fltnotify.item_timeout>
 ---@field package _tocb function
 local M = {}
 M.__index = M
@@ -97,6 +97,19 @@ local function validate(lvl, ...)
     end
 end
 
+local mmax = math.max
+
+---@private
+---@param amount number
+---@param last? integer
+function M:_update_timeouts(amount, last)
+    last = last or #self._toheap
+    for i = 1, last do
+        local to = self._toheap[i]
+        to.val = mmax(to.val - amount, 0)
+    end
+end
+
 --- Shows a notification
 ---@param notification fltnotify.notification The notification to show
 function M:notification_show(notification)
@@ -110,11 +123,8 @@ function M:notification_show(notification)
     self:_update_buf(notification, hide)
     self:_update_win()
 
-    local to = item.timeout
-    if not hide and to then
-        item.timeout = nil
-        local tomgr = require('fltnotify.timeout')
-        tomgr.add_timeout(self._totimer, self._tolist, to, self._tocb)
+    if not hide and item.timeout ~= nil then
+        self:_start_timeout(item.timeout)
     end
 end
 
@@ -201,62 +211,57 @@ function M:_set_progress(id, progress)
     return changed
 end
 
----@param list fltnotify.item_timeout[]
----@param id fltnotify.notification
----@return boolean
-local function remove_from_tolist(list, id)
-    local i = 1
-    local found = false
-    while i <= #list do
-        if list[i].id == id then
-            table.remove(list, i)
-            if not found then
-                found = true
-            end
+---@private
+---@param to? fltnotify.item_timeout
+function M:_start_timeout(to)
+    local front = self._toheap:front()
+    local curval = front and front.val or nil
+
+    if to then
+        local due = self._totimer:get_due_in()
+        if curval and due > 0 then
+            self._totimer:stop()
+            curval = curval - due
+            self:_update_timeouts(curval)
+        end
+
+        if front and front.id == to.id then
+            self._toheap:replace(to)
         else
-            i = i + 1
+            self._toheap:push(to)
         end
     end
-    return found
+
+    if curval and curval ~= self._toheap:front().val then
+        self._totimer:stop()
+    end
+
+    if not self._totimer:is_active() and #self._toheap > 0 then
+        self._totimer:start(self._toheap:front().val, 0, self._tocb)
+    end
 end
 
 ---@private
 ---@param id fltnotify.notification
 ---@param timeout number|false|nil
+---@return boolean changed
 function M:_set_timeout(id, timeout)
-    local changed = false
-    if timeout == false then
-        if self._shown[id] then
-            local tomgr = require('fltnotify.timeout')
-            if self._tolist[1] and self._tolist[1].id == id then
-                tomgr.update_timelist(self._totimer, self._tolist)
-                tomgr.timelist_pop(self._tolist)
-                tomgr.restart_timer(self._totimer, self._tolist, self._tocb)
-                changed = true
-            end
-        end
-        return remove_from_tolist(self._tolist, id) or changed
-    elseif timeout == nil then
+    if timeout == nil then
         -- set default timeout
-        ---@cast timeout -?
         timeout = self._cfg.timeout
     end
-    validate(3, 'timeout', timeout, 'number')
-    local ito = { id = id, val = timeout }
-    if self._shown[id] then
-        local tomgr = require('fltnotify.timeout')
-        if self._tolist[1] and self._tolist[1].id == id then
-            tomgr.update_timelist(self._totimer, self._tolist)
-            changed = true
-        end
-        tomgr.add_timeout(self._totimer, self._tolist, ito, self._tocb)
-        tomgr.restart_timer(self._totimer, self._tolist, self._tocb)
+    validate(3, 'timeout', timeout, { 'number', 'boolean' })
+
+    local item = self._items[id]
+    local oldval
+    if type(timeout) == 'number' then
+        oldval = item.timeout and item.timeout.val or nil
+        item.timeout = T:new(id, timeout)
     else
-        changed = not not self._items[id].timeout
-            and self._items[id].timeout.val ~= ito.val
-        self._items[id].timeout = ito
+        item.timeout = nil
     end
-    return changed
+
+    return self._shown[id] or oldval ~= timeout
 end
 
 ---@private
@@ -528,8 +533,10 @@ function M:_update_win()
         height = height + count - 1
     end
     if height <= 0 then
-        local winconfig = { hide = true }
-        vim.api.nvim_win_set_config(self._win, winconfig)
+        if self._win and vim.api.nvim_win_is_valid(self._win) then
+            local winconfig = { hide = true }
+            vim.api.nvim_win_set_config(self._win, winconfig)
+        end
     else
         if not self._win or not vim.api.nvim_win_is_valid(self._win) then
             self:_open_win(width, height)
@@ -660,12 +667,6 @@ local function update_virt_lines(buf, ns, id, line)
         end
         buf_set_extmark(buf, ns, e[1], e[2], em)
     end
-end
-
-function M:_start_timeout(id, timeout)
-    local tomgr = require('fltnotify.timeout')
-    local to = { id = id, val = timeout }
-    tomgr.add_timeout(self._totimer, self._tolist, to, self._tocb)
 end
 
 ---@param id fltnotify.notification
@@ -946,6 +947,39 @@ function M:create_cancelation_command(name)
     })
 end
 
+---@private
+---@param ids integer[]
+function M:_timeoutcb_wrap(ids)
+    -- remove all of them
+    for _, id in ipairs(ids) do
+        self:notification_delete(id)
+    end
+    self:_start_timeout()
+end
+M._timeoutcb_wrap = vim.schedule_wrap(M._timeoutcb_wrap)
+
+---@package
+function M:_timeoutcb()
+    local ids = {}
+
+    local last = self._toheap:pop()
+    self:_update_timeouts(last.val)
+
+    if self._items[last.id].timeout == last then
+        ids[#ids + 1] = last.id
+    end
+
+    -- capture all notifications that should be removed
+    while #self._toheap > 0 and self._toheap:front().val <= 0 do
+        last = self._toheap:pop()
+        if self._items[last.id].timeout == last then
+            ids[#ids + 1] = last.id
+        end
+    end
+
+    self:_timeoutcb_wrap(ids)
+end
+
 return {
     ---Creates a new notification manager
     ---@param config fltnotify.config
@@ -969,12 +1003,14 @@ return {
             _ianim = {},
             _danim = {},
             _totimer = assert(vim.uv.new_timer()),
-            _tolist = {},
-            _tocb = vim.schedule_wrap(function(notification)
-                mgr:notification_delete(notification)
+            _toheap = require('fltnotify.heap'):new(function(l, r)
+                return l.val < r.val
             end),
             _linked = {},
             _rlink = {},
+            _tocb = function()
+                mgr:_timeoutcb()
+            end,
         }
         ---@cast mgr fltnotify.manager
         local ok, anim = pcall(require, 'fltanim')
