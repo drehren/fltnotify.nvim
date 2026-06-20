@@ -185,33 +185,40 @@ function M.register_progress_display(registrar, categories)
     local evs = {}
     local display = registrar.create_display({
         on_start = vim.schedule_wrap(function(event)
-            if not evs[event.id] then
-                evs[event.id] = M.create_notification()
-            end
-            local notification = evs[event.id]
-            M.notification_set_data(notification, {
+            assert(not evs[event.id], 'fltnotify progress start: reusing id')
+            evs[event.id] = M.create_notification()
+
+            local id = evs[event.id]
+            M.notification_set_data(id, {
                 message = format_progr_msg(event),
                 level = event.level,
                 progress = event.progress,
                 cancel = event.cancel,
             })
-            M.notification_display(notification)
+            M.notification_display(id)
         end),
         on_update = vim.schedule_wrap(function(event)
-            local notification = assert(evs[event.id], 'invalid event')
-            M.notification_set_data(notification, {
+            local id =
+                assert(evs[event.id], 'fltprogr progress update: invalid event')
+            M.notification_set_data(id, {
                 message = format_progr_msg(event),
                 level = event.level,
                 progress = event.progress,
             })
         end),
         on_end = vim.schedule_wrap(function(event)
-            local notification = assert(evs[event.id], 'invalid event')
-            M.notification_set_data(notification, {
-                message = format_progr_msg(event),
-                progress = 'done',
-                timeout = get_manager():timeout() / 2,
-            })
+            local id =
+                assert(evs[event.id], 'fltprogr progress end: invalid event')
+            if event.message then
+                M.notification_set_data(id, {
+                    message = format_progr_msg(event),
+                    progress = 'done',
+                    timeout = require('fltnotify.config').get({}).progress_done_timeout,
+                })
+            else
+                M.notification_delete(id)
+            end
+            evs[event.id] = nil
         end),
     })
     registrar.display_register(display, categories)

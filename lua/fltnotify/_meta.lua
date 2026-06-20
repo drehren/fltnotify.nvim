@@ -84,6 +84,10 @@
 ---
 --- Use this to automatically create a command. Defaults to `nil`
 ---@field cancel_command_name? string
+--- Timeout for progress notifications.
+---
+--- How much time will a notification linger in screen after it is 'done'.
+---@field progress_done_timeout? number
 
 ---@type fltnotify.config
 vim.g.fltnotify_config = vim.g.fltnotify_config

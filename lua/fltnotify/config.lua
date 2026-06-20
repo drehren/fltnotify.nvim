@@ -22,6 +22,7 @@
 ---@field progress_animation fltnotify.internal_progress_config
 ---@field replace_system_notification boolean
 ---@field cancel_command_name string
+---@field progress_done_timeout number
 
 ---@type fltnotify.internal_config
 local default_config = {
@@ -66,6 +67,7 @@ local default_config = {
     },
     replace_system_notification = false,
     cancel_command_name = 'FltNotifyCancel',
+    progress_done_timeout = 1000,
 }
 
 return {
